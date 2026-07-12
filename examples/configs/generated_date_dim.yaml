@@ -1,0 +1,72 @@
+# Example: Generated Source (Date Dimension)
+# Demonstrates the `generated: true` source type for synthetic tables.
+# The source creates a single-row DataFrame; columns use expressions to generate data.
+
+name: d_date
+layer: gold
+target_schema: dimension
+description: "Date dimension with calendar attributes (generated source)"
+
+policies:
+  orchestration:
+    active: true
+    batch: 0
+    order: 1
+  optimisation:
+    load_mode: merge
+    merge_strategy: insert_only
+
+natural_key:
+  - DateNaturalID
+
+sources:
+  - name: generated
+    generated: true  # No physical table - creates a synthetic DataFrame
+
+columns:
+  - name: DateID
+    data_type: string
+    nullable: false
+    inputs:
+      - expression: "md5(CAST(date_value AS STRING))"
+
+  - name: DateNaturalID
+    data_type: string
+    nullable: false
+    inputs:
+      - expression: "CAST(date_value AS STRING)"
+
+  - name: FullDate
+    data_type: date
+    nullable: false
+    inputs:
+      - expression: "date_value"
+
+  - name: DayOfWeek
+    data_type: int
+    nullable: false
+    inputs:
+      - expression: "dayofweek(date_value)"
+
+  - name: MonthName
+    data_type: string
+    nullable: false
+    inputs:
+      - expression: "date_format(date_value, 'MMMM')"
+
+  - name: Year
+    data_type: int
+    nullable: false
+    inputs:
+      - expression: "year(date_value)"
+
+stages:
+  - name: add_sentinels
+    extensions:
+      stage_plugin: ensure_sentinels
+      records:
+        - DateID: "NO_DATE"
+          DateNaturalID: "1900-01-01"
+          DayOfWeek: 0
+          MonthName: "!! Unknown"
+          Year: 1900

@@ -1,0 +1,70 @@
+# Example: Union with Column Map
+# Demonstrates per-source column mapping in union stages.
+# Each source can have its own SQL expressions applied before the union.
+
+name: consolidated_transactions
+layer: silver
+target_schema: transform
+description: "Consolidated transactions from multiple source systems"
+
+policies:
+  orchestration:
+    active: true
+    batch: 4
+    order: 10
+  optimisation:
+    load_mode: merge
+    merge_strategy: update_changed
+    hash_columns:
+      - amount
+      - status
+
+natural_key:
+  - transaction_id
+  - source_system
+
+sources:
+  - name: system_a
+    table: silver.transactions_system_a
+  - name: system_b
+    table: silver.transactions_system_b
+
+stages:
+  - name: combine_sources
+    mode: union
+    union:
+      mode: by_name
+      allow_missing_columns: true
+      sources:
+        - name: system_a
+          column_map:
+            amount: "value * exchange_rate"       # Apply FX conversion
+            source_system: "'SYSTEM_A'"           # Tag with source
+            transaction_date: "CAST(txn_date AS DATE)"
+        - name: system_b
+          column_map:
+            amount: "total_amount"                # Different column name
+            source_system: "'SYSTEM_B'"
+            transaction_date: "CAST(trade_date AS DATE)"
+
+columns:
+  - name: transaction_id
+    data_type: string
+    nullable: false
+
+  - name: source_system
+    data_type: string
+    nullable: false
+
+  - name: amount
+    data_type: decimal
+    nullable: false
+    default: 0.0
+
+  - name: transaction_date
+    data_type: date
+    nullable: false
+
+  - name: status
+    data_type: string
+    nullable: true

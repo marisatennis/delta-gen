@@ -1,0 +1,81 @@
+# Example using new smart column templates
+# Much cleaner than before - no need to specify ${defaults.X.Y.Z} for every field!
+
+name: user_profile_dim
+layer: silver
+natural_id: user_id
+description: "User profile dimension with smart column templates"
+
+policies:
+  optimisation:
+    load_mode: ${defaults.policies.optimisation.load_mode}  # Still use macros for policies
+    partition_by: user_id
+
+  creation:
+    generic: ${defaults.policies.creation.generic}
+    notebook_name: "process_users"
+
+  orchestration:
+    batch: ${defaults.policies.orchestration.batch}
+    active: ${defaults.policies.orchestration.active}
+
+sources:
+  - name: raw_users
+    path: /lakehouse/bronze/users
+    format: delta
+
+stages:
+  - name: source_stage
+    mode: transformation
+    columns:
+      # Regular columns - specify all fields as before
+      - name: user_id
+        data_type: bigint
+        nullable: false
+        natural: true
+        temporary: false
+        inputs:
+          - source: raw_users
+            column: id
+
+      - name: username
+        data_type: varchar(100)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_users
+            column: username
+
+      - name: email
+        data_type: varchar(255)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_users
+            column: email
+
+      # 🎉 NEW! Smart column templates
+      # Just specify the name - system automatically merges from defaults.common_columns!
+      - name: is_active
+        temporary: false
+        inputs:
+          - source: raw_users
+            column: active_flag
+        # ← Auto-inherits: data_type: boolean, nullable: false, default: true
+
+      - name: audit_created_at
+        temporary: false
+        inputs:
+          - expression: "CURRENT_TIMESTAMP()"
+        # ← Auto-inherits: data_type: timestamp, nullable: false
+
+      - name: audit_updated_at
+        temporary: false
+        inputs:
+          - expression: "CURRENT_TIMESTAMP()"
+        # ← Auto-inherits: data_type: timestamp, nullable: true
+
+tags:
+  - dimension
+  - user
+  - profile

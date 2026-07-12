@@ -1,0 +1,39 @@
+name: Unit Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+          pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: pytest test/unit/ -v --tb=short
+
+      - name: Run tests with coverage
+        if: matrix.python-version == '3.12'
+        run: |
+          pip install pytest-cov
+          pytest test/unit/ --cov=deltagen --cov-report=term-missing --cov-fail-under=60

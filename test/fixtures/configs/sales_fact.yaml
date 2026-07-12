@@ -1,0 +1,135 @@
+# Sales fact table configuration
+
+name: sales_fact
+layer: gold
+description: "Daily sales transactions fact table"
+
+policies:
+  optimisation:
+    load_mode: append
+    partition_by: sale_date
+
+  creation:
+    generic: ${defaults.policies.creation.generic}
+    notebook_name: "process_sales"
+
+  orchestration:
+    batch: 2
+    order: 20
+    active: true
+
+sources:
+  - name: raw_transactions
+    path: /lakehouse/bronze/transactions
+    format: delta
+    options:
+      merge_schema: true
+
+stages:
+  - name: source_stage
+    mode: transformation
+    description: "Load and transform raw transactions"
+    columns:
+      - name: transaction_id
+        data_type: bigint
+        nullable: false
+        natural: true
+        temporary: false
+        inputs:
+          - source: raw_transactions
+            column: txn_id
+
+      - name: customer_id
+        data_type: int
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_transactions
+            column: customer_id
+
+      - name: product_id
+        data_type: int
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_transactions
+            column: product_id
+
+      - name: sale_date
+        data_type: date
+        nullable: false
+        temporary: false
+        inputs:
+          - expression: "CAST(transaction_timestamp AS DATE)"
+
+      - name: quantity
+        data_type: int
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_transactions
+            column: qty
+
+      - name: unit_price
+        data_type: decimal(18,2)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_transactions
+            column: price
+
+      - name: total_amount
+        data_type: decimal(18,2)
+        nullable: false
+        temporary: false
+        inputs:
+          - expression: "quantity * unit_price"
+
+      # Temporary working columns
+      - name: temp_discount_pct
+        data_type: decimal(5,2)
+        nullable: true
+        temporary: true
+        description: "Temporary discount percentage calculation"
+        inputs:
+          - source: raw_transactions
+            column: discount
+
+      - name: temp_tax_amount
+        data_type: decimal(18,2)
+        nullable: true
+        temporary: true
+        inputs:
+          - expression: "total_amount * 0.08"
+
+  - name: aggregation_stage
+    mode: transformation
+    description: "Final calculations"
+    columns:
+      - name: net_amount
+        data_type: decimal(18,2)
+        nullable: false
+        temporary: false
+        inputs:
+          - expression: "total_amount - COALESCE(temp_discount_pct, 0) + COALESCE(temp_tax_amount, 0)"
+
+      - name: created_at
+        data_type: timestamp
+        nullable: false
+        temporary: false
+        inputs:
+          - expression: "CURRENT_TIMESTAMP()"
+
+tags:
+  - fact
+  - sales
+  - transactions
+
+extensions:
+  data_quality:
+    rules:
+      - column: total_amount
+        type: not_null
+      - column: total_amount
+        type: greater_than
+        value: 0

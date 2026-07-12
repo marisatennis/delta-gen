@@ -1,0 +1,88 @@
+# Product dimension table configuration
+
+name: product_dim
+layer: silver
+natural_id: product_key
+description: "Product dimension with categories"
+
+policies:
+  optimisation:
+    load_mode: ${defaults.policies.optimisation.load_mode}
+    partition_by: category_id
+
+  creation:
+    generic: true
+    notebook_name: "process_products"
+
+  orchestration:
+    batch: 1
+    order: 5
+    active: true
+
+sources:
+  - name: raw_products
+    path: /lakehouse/bronze/products
+    format: delta
+
+  - name: raw_categories
+    path: /lakehouse/bronze/categories
+    format: delta
+
+stages:
+  - name: source_stage
+    mode: transformation
+    columns:
+      - name: product_id
+        data_type: int
+        nullable: false
+        natural: true
+        temporary: false
+        inputs:
+          - source: raw_products
+            column: id
+
+      - name: product_name
+        data_type: varchar(255)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_products
+            column: name
+
+      - name: category_id
+        data_type: int
+        nullable: true
+        temporary: false
+        inputs:
+          - source: raw_products
+            column: category_id
+
+      - name: unit_price
+        data_type: decimal(18,2)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_products
+            column: price
+
+      - name: is_active
+        data_type: ${defaults.common_columns.is_active.data_type}
+        nullable: ${defaults.common_columns.is_active.nullable}
+        default: ${defaults.common_columns.is_active.default}
+        temporary: false
+        inputs:
+          - source: raw_products
+            column: active_flag
+
+    joins:
+      - name: cat
+        source: raw_categories
+        type: left
+        conditions:
+          - left: category_id
+            right: id
+            operator: "="
+
+tags:
+  - dimension
+  - product

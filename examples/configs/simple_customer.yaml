@@ -1,0 +1,49 @@
+# Simple example: Basic customer dimension
+# Single source, one stage, direct column mappings
+
+name: simple_customer
+layer: silver
+description: "Simple customer dimension - basic column mappings"
+
+sources:
+  - name: raw_customers
+    path: /lakehouse/bronze/customers
+    format: delta
+
+stages:
+  - name: transform
+    mode: transformation
+    columns:
+      # Direct column reference with type cast
+      - name: customer_id
+        data_type: int
+        nullable: false
+        natural: true
+        inputs:
+          - source: raw_customers
+            column: id
+
+      # Another direct reference
+      - name: email
+        data_type: varchar(255)
+        nullable: true
+        inputs:
+          - source: raw_customers
+            column: email_address
+
+      # Expression-based column
+      - name: full_name
+        data_type: varchar(200)
+        inputs:
+          - expression: "CONCAT(first_name, ' ', last_name)"
+
+      # Column with default value
+      - name: status
+        data_type: varchar(50)
+        default: "active"
+        inputs:
+          - source: raw_customers
+            column: status
+
+    filters:
+      - "is_deleted = false"

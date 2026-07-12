@@ -1,0 +1,234 @@
+# Complex example: Sales fact table with multiple stages and joins
+# Multiple sources, multi-stage transformation, joins, filters
+
+name: sales_fact
+layer: gold
+description: "Sales fact table with dimension lookups and currency conversion"
+
+sources:
+  # Column pruning is AUTOMATIC - PlanBuilder analyzes stages to detect
+  # which columns are needed from each source. No need to specify columns!
+  #
+  # You can still use explicit `columns:` to override auto-detection if needed.
+
+  - name: raw_sales
+    path: /lakehouse/bronze/sales
+    format: delta
+    alias: src
+    # columns: auto-detected from stage inputs, joins, and filters
+
+  - name: dim_customer
+    path: /lakehouse/silver/dim_customer
+    format: delta
+    alias: cust
+    broadcast: true  # Small dimension table - broadcast for better join performance
+    # columns: auto-detected (customer_natural_id, customer_sk, is_current)
+
+  - name: dim_product
+    path: /lakehouse/silver/dim_product
+    format: delta
+    alias: prod
+    broadcast: true  # Small dimension table - broadcast for better join performance
+    # columns: auto-detected (product_natural_id, product_sk, is_active)
+
+  - name: exchange_rates
+    path: /lakehouse/silver/exchange_rates
+    format: delta
+    alias: fx
+    broadcast: true  # Small lookup table - broadcast for better join performance
+    # columns: auto-detected (from_currency, effective_date, rate_to_usd)
+
+stages:
+  # Stage 1: Initial casting and basic transformations
+  - name: cast_stage
+    mode: transformation
+    description: "Cast source columns and create composite keys"
+    columns:
+      - name: sale_id
+        data_type: bigint
+        nullable: false
+        natural: true
+        inputs:
+          - source: src
+            column: transaction_id
+
+      - name: sale_date
+        data_type: date
+        nullable: false
+        inputs:
+          - source: src
+            column: sale_timestamp
+
+      - name: customer_id
+        data_type: int
+        inputs:
+          - source: src
+            column: cust_id
+
+      - name: product_id
+        data_type: int
+        inputs:
+          - source: src
+            column: prod_id
+
+      # Composite key from multiple inputs
+      - name: sale_key
+        data_type: varchar(100)
+        inputs:
+          - source: src
+            column: region_code
+          - source: src
+            column: transaction_id
+        extensions:
+          delimiter: "-"
+
+      - name: quantity
+        data_type: int
+        default: 1
+        inputs:
+          - source: src
+            column: qty
+
+      - name: unit_price
+        data_type: decimal(18,2)
+        inputs:
+          - source: src
+            column: price
+
+      - name: currency_code
+        data_type: varchar(3)
+        default: "USD"
+        inputs:
+          - source: src
+            column: currency
+
+      # Temporary column for intermediate calculation
+      - name: gross_amount
+        data_type: decimal(18,2)
+        temporary: true
+        inputs:
+          - expression: "qty * price"
+
+    # Filters support full SQL expression syntax including complex boolean logic.
+    # Multiple filters are combined with AND. Use a single string for OR logic.
+    filters:
+      - "sale_timestamp >= '2020-01-01'"
+      - "is_cancelled = false"
+      # Complex boolean expression example (commented - for reference):
+      # - "((region_code = 'US' OR region_code = 'CA') AND qty > 0) OR (is_priority = true AND price > 100)"
+
+  # Stage 2: Join with dimensions and add foreign keys
+  - name: enrich_stage
+    mode: transformation
+    description: "Join with dimensions to get surrogate keys"
+
+    # Source filters are applied BEFORE joins (filter pushdown for performance)
+    # This reduces the size of dimension tables before joining
+    #
+    # Option 1: Explicit source_filters (shown below)
+    # Option 2: Auto-detect pushdown - use source.column syntax in regular filters:
+    #   filters:
+    #     - "cust.is_current = true"        # Auto-pushed to dim_customer before join
+    #     - "prod.is_active = true"          # Auto-pushed to dim_product before join
+    #     - "total_amount > 100"             # Applied after joins (no source prefix)
+    source_filters:
+      dim_customer:
+        - "is_current = true"  # Only join to current customer records
+      dim_product:
+        - "is_active = true"   # Only join to active products
+
+    joins:
+      - name: customer_lookup
+        type: left
+        source: dim_customer
+        conditions:
+          - left: customer_id
+            right: cust.customer_natural_id
+            operator: "="
+
+      - name: product_lookup
+        type: left
+        source: dim_product
+        conditions:
+          - left: product_id
+            right: prod.product_natural_id
+            operator: "="
+
+      - name: fx_lookup
+        type: left
+        source: exchange_rates
+        conditions:
+          - left: currency_code
+            right: fx.from_currency
+            operator: "="
+          - left: sale_date
+            right: fx.effective_date
+            operator: "="
+
+    columns:
+      - name: sale_id
+        data_type: bigint
+        natural: true
+        inputs:
+          - column: sale_id
+
+      - name: sale_key
+        data_type: varchar(100)
+        inputs:
+          - column: sale_key
+
+      - name: sale_date
+        data_type: date
+        inputs:
+          - column: sale_date
+
+      # Foreign keys from dimension lookups
+      - name: fk_customer
+        data_type: bigint
+        default: -1
+        inputs:
+          - source: cust
+            column: customer_sk
+
+      - name: fk_product
+        data_type: bigint
+        default: -1
+        inputs:
+          - source: prod
+            column: product_sk
+
+      - name: quantity
+        data_type: int
+        inputs:
+          - column: quantity
+
+      - name: unit_price_local
+        data_type: decimal(18,2)
+        inputs:
+          - column: unit_price
+
+      # Currency converted amount
+      - name: unit_price_usd
+        data_type: decimal(18,2)
+        inputs:
+          - expression: "COALESCE(unit_price * fx.rate_to_usd, unit_price)"
+
+      - name: total_amount_local
+        data_type: decimal(18,2)
+        inputs:
+          - expression: "quantity * unit_price"
+
+      - name: total_amount_usd
+        data_type: decimal(18,2)
+        inputs:
+          - expression: "quantity * COALESCE(unit_price * fx.rate_to_usd, unit_price)"
+
+      - name: currency_code
+        data_type: varchar(3)
+        inputs:
+          - column: currency_code
+
+tags:
+  - fact
+  - sales
+  - gold-layer

@@ -1,0 +1,183 @@
+# Example: Union and Group By features
+# Demonstrates combining multiple sources and aggregating data
+
+name: regional_sales_summary
+layer: gold
+description: "Regional sales summary combining multiple year sources with aggregations"
+
+sources:
+  # Multiple sources to union together
+  - name: sales_2023
+    path: /lakehouse/silver/sales_2023
+    format: delta
+    alias: s23
+
+  - name: sales_2024
+    path: /lakehouse/silver/sales_2024
+    format: delta
+    alias: s24
+
+  # Dimension for enrichment
+  - name: dim_region
+    path: /lakehouse/silver/dim_region
+    format: delta
+    alias: reg
+    broadcast: true
+
+stages:
+  # Stage 1: Union multiple year sources
+  - name: combine_years
+    mode: transformation
+    description: "Combine sales from 2023 and 2024"
+
+    # UNION: Combine multiple sources into one DataFrame
+    unions:
+      sources: [sales_2023, sales_2024]  # Minimum 2 sources required
+      mode: by_name                       # Match columns by name (default)
+      # mode: by_position                 # Alternative: match by column position
+      distinct: false                     # UNION ALL (default), set true for UNION DISTINCT
+      allow_missing_columns: false        # Set true to fill missing columns with NULL
+
+    # Source filters are applied BEFORE the union for performance
+    source_filters:
+      sales_2023:
+        - "is_valid = true"
+      sales_2024:
+        - "is_valid = true"
+
+    # Build columns after union
+    columns:
+      - name: sale_id
+        data_type: bigint
+        natural: true
+        inputs:
+          - column: transaction_id
+
+      - name: region_code
+        data_type: varchar(10)
+        inputs:
+          - column: region
+
+      - name: product_category
+        data_type: varchar(50)
+        inputs:
+          - column: category
+
+      - name: sale_amount
+        data_type: decimal(18,2)
+        inputs:
+          - column: amount
+
+      - name: sale_date
+        data_type: date
+        inputs:
+          - column: sale_date
+
+  # Stage 2: Enrich with region dimension
+  - name: enrich_region
+    mode: transformation
+    description: "Add region details"
+
+    joins:
+      - name: region_lookup
+        type: left
+        source: dim_region
+        conditions:
+          - left: region_code
+            right: reg.region_code
+
+    columns:
+      - name: sale_id
+        data_type: bigint
+        natural: true
+        inputs:
+          - column: sale_id
+
+      - name: region_code
+        data_type: varchar(10)
+        inputs:
+          - column: region_code
+
+      - name: region_name
+        data_type: varchar(100)
+        inputs:
+          - source: reg
+            column: region_name
+
+      - name: product_category
+        data_type: varchar(50)
+        inputs:
+          - column: product_category
+
+      - name: sale_amount
+        data_type: decimal(18,2)
+        inputs:
+          - column: sale_amount
+
+      - name: sale_year
+        data_type: int
+        inputs:
+          - expression: "YEAR(sale_date)"
+
+  # Stage 3: Aggregate by region and category
+  - name: aggregate_sales
+    mode: transformation
+    description: "Aggregate sales by region and category"
+
+    # Filters are applied BEFORE group_by (WHERE clause semantics)
+    # This reduces data volume before aggregation
+    filters:
+      - "sale_amount > 0"
+
+    # GROUP BY: Aggregate data
+    group_by:
+      # Columns to group by
+      columns:
+        - region_code
+        - region_name
+        - product_category
+        - sale_year
+
+      # Aggregation functions
+      aggregations:
+        # SUM
+        - column: sale_amount
+          function: sum
+          alias: total_sales
+
+        # COUNT
+        - column: sale_id
+          function: count
+          alias: transaction_count
+
+        # COUNT DISTINCT
+        - column: sale_id
+          function: count
+          alias: unique_transactions
+          distinct: true
+
+        # AVG
+        - column: sale_amount
+          function: avg
+          alias: avg_sale_amount
+
+        # MIN/MAX
+        - column: sale_amount
+          function: min
+          alias: min_sale
+
+        - column: sale_amount
+          function: max
+          alias: max_sale
+
+      # HAVING clause - filters AFTER aggregation
+      having:
+        - "total_sales > 1000"
+        - "transaction_count >= 10"
+
+tags:
+  - gold-layer
+  - aggregation
+  - sales
+  - union-example
+  - group-by-example

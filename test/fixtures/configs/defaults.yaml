@@ -1,0 +1,55 @@
+# Default configuration values shared across all tables
+
+defaults:
+  # Common policies
+  policies:
+    optimisation:
+      load_mode: merge
+      partition_by: null
+
+    creation:
+      generic: true
+      notebook_name: null
+
+    orchestration:
+      batch: 1
+      active: true
+
+  # Common column definitions
+  common_columns:
+    audit_created_at:
+      data_type: timestamp
+      nullable: false
+      temporary: false
+      description: "Record creation timestamp"
+
+    audit_updated_at:
+      data_type: timestamp
+      nullable: true
+      temporary: false
+      description: "Record last update timestamp"
+
+    is_active:
+      data_type: boolean
+      nullable: false
+      default: true
+      temporary: false
+      description: "Soft deletion flag"
+
+  # SCD2 tracking fields
+  scd2_fields:
+    record_start_date:
+      data_type: date
+      nullable: false
+      temporary: false
+
+    record_end_date:
+      data_type: date
+      nullable: true
+      temporary: false
+
+    is_current:
+      data_type: boolean
+      nullable: false
+      default: true
+      temporary: false

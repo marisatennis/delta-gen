@@ -1,0 +1,93 @@
+# Example: Join with Source Deduplication
+# Demonstrates dedupe_by on joins to prevent row explosion when
+# joining to a dimension that may have multiple rows per key.
+
+name: enriched_orders
+layer: silver
+target_schema: silver
+description: "Orders enriched with latest customer info"
+
+policies:
+  orchestration:
+    active: true
+    batch: 2
+    order: 10
+  optimisation:
+    load_mode: merge
+    merge_strategy: update_changed
+
+natural_key:
+  - order_id
+
+sources:
+  - name: orders
+    table: bronze.raw_orders
+  - name: customers
+    table: silver.customer_history
+    broadcast: true
+
+incremental:
+  filter_mode: watermark
+  watermark_column: modified_date
+  source_watermark_column: last_modified
+
+stages:
+  - name: enrich_with_customer
+    mode: transformation
+    joins:
+      - name: customer_lookup
+        source: customers
+        type: left
+        # Deduplicate customer_history to one row per customer_id
+        # keeping the most recent record (highest effective_date)
+        dedupe_by:
+          - customer_id
+        dedupe_order_by: effective_date
+        dedupe_order_desc: true  # Keep latest (default)
+        conditions:
+          - left: customer_id
+            right: customer_id
+
+columns:
+  - name: order_id
+    data_type: string
+    nullable: false
+    inputs:
+      - source: orders
+        column: id
+
+  - name: customer_id
+    data_type: string
+    nullable: false
+    inputs:
+      - source: orders
+        column: customer_id
+
+  - name: customer_name
+    data_type: string
+    nullable: true
+    inputs:
+      - source: customers
+        column: name
+
+  - name: customer_segment
+    data_type: string
+    nullable: true
+    inputs:
+      - source: customers
+        column: segment
+
+  - name: order_total
+    data_type: decimal
+    nullable: false
+    default: 0.0
+    inputs:
+      - source: orders
+        column: total_amount
+
+  - name: modified_date
+    data_type: date
+    nullable: false
+    inputs:
+      - source: orders
+        column: last_modified

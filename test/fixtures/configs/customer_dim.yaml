@@ -1,0 +1,89 @@
+# Customer dimension table configuration
+
+name: customer_dim
+layer: silver
+natural_id: customer_id
+description: "Customer dimension table with SCD2 tracking"
+
+# Using macros to reference defaults
+policies:
+  optimisation:
+    load_mode: ${defaults.policies.optimisation.load_mode}
+    partition_by: customer_id
+
+  creation:
+    generic: ${defaults.policies.creation.generic}
+    notebook_name: null
+
+  orchestration:
+    batch: ${defaults.policies.orchestration.batch}
+    order: 10
+    active: ${defaults.policies.orchestration.active}
+
+sources:
+  - name: raw_customers
+    path: /lakehouse/bronze/customers
+    format: delta
+
+stages:
+  - name: source_stage
+    mode: transformation
+    description: "Map raw customer data to dimension"
+    columns:
+      - name: customer_id
+        data_type: int
+        nullable: false
+        natural: true
+        temporary: false
+        inputs:
+          - source: raw_customers
+            column: id
+
+      - name: first_name
+        data_type: varchar(100)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_customers
+            column: first_name
+
+      - name: last_name
+        data_type: varchar(100)
+        nullable: false
+        temporary: false
+        inputs:
+          - source: raw_customers
+            column: last_name
+
+      - name: email
+        data_type: varchar(255)
+        nullable: true
+        natural: true
+        temporary: false
+        inputs:
+          - source: raw_customers
+            column: email
+        extensions:
+          pii: true
+          masked: true
+
+      - name: full_name
+        data_type: varchar(255)
+        nullable: false
+        temporary: true
+        description: "Temporary concatenation for processing"
+        inputs:
+          - expression: "CONCAT(first_name, ' ', last_name)"
+
+      - name: created_at
+        data_type: ${defaults.common_columns.audit_created_at.data_type}
+        nullable: ${defaults.common_columns.audit_created_at.nullable}
+        temporary: false
+        inputs:
+          - source: raw_customers
+            column: created_timestamp
+
+tags:
+  - dimension
+  - scd2
+  - customer
