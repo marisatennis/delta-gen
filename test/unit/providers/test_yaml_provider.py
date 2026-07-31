@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from deltagen.model import TableConfig
-from deltagen.providers import YamlConfigProvider
+from deltagen.providers import MacroResolutionError, YamlConfigProvider
 
 
 # Path to test fixtures
@@ -88,6 +88,35 @@ class TestMacroExpansion:
         assert is_active.data_type == "boolean"
         assert is_active.nullable is False
         assert is_active.default is True
+
+    def test_engine_timestamp_and_boolean_defaults_resolve_before_build(self):
+        """Platform column defaults must resolve while parsing, before Spark runs."""
+        provider = YamlConfigProvider(
+            TableConfig, defaults_path=FIXTURES_DIR / "defaults.yaml"
+        )
+        table = provider.load_dict({
+            "name": "typed_defaults",
+            "layer": "silver",
+            "stages": [{
+                "name": "project",
+                "columns": [
+                    {
+                        "name": "changed_at",
+                        "data_type": "timestamp",
+                        "default": "${defaults.columns.default_timestamp}",
+                    },
+                    {
+                        "name": "is_active",
+                        "data_type": "boolean",
+                        "default": "${defaults.columns.default_boolean}",
+                    },
+                ],
+            }],
+        })
+
+        columns = {column.name: column for column in table.iter_columns()}
+        assert columns["changed_at"].default == "1900-01-01 00:00:00"
+        assert columns["is_active"].default is False
 
 
 class TestDefaultsMerging:
@@ -311,6 +340,31 @@ class TestErrorHandling:
 
         with pytest.raises(ValueError, match="Could not resolve"):
             provider.load_dict(config_with_bad_macro)
+
+    def test_unknown_column_default_raises_typed_error_with_known_keys(self):
+        """An unknown macro must fail during parsing with actionable vocabulary."""
+        provider = YamlConfigProvider(TableConfig, auto_discover_defaults=False)
+        config = {
+            "name": "bad_default",
+            "layer": "silver",
+            "stages": [{
+                "name": "project",
+                "columns": [{
+                    "name": "bad",
+                    "data_type": "string",
+                    "default": "${defaults.columns.default_bogus}",
+                }],
+            }],
+        }
+
+        with pytest.raises(MacroResolutionError) as caught:
+            provider.load_dict(config)
+
+        message = str(caught.value)
+        assert "${defaults.columns.default_bogus}" in message
+        assert "defaults.columns.default_timestamp" in message
+        assert "defaults.columns.default_boolean" in message
+        assert caught.value.config_path == "stages[0].columns[0].default"
 
 
 class TestLoadDictMethod:

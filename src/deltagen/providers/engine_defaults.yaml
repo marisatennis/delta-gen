@@ -1,0 +1,9 @@
+# Defaults guaranteed by the engine for every configuration provider.
+defaults:
+  columns:
+    default_string: UNKNOWN
+    default_int: 0
+    default_decimal: 0.0
+    default_date: "1900-01-01"
+    default_timestamp: "1900-01-01 00:00:00"
+    default_boolean: false

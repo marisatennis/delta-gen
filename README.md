@@ -50,6 +50,12 @@ python -m pip install -e .
 
 ### YAML Configuration
 
+The engine guarantees these column-default macros for every provider, while an
+explicit defaults file may override their values: `default_string`,
+`default_int`, `default_decimal`, `default_date`, `default_timestamp`, and
+`default_boolean` under `${defaults.columns.*}`. Unknown macros raise
+`MacroResolutionError` during configuration parsing and report the known keys.
+
 ```yaml
 name: customer
 layer: silver

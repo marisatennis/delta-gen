@@ -8,7 +8,7 @@ import yaml
 from pydantic import ValidationError
 
 from .base import ConfigProvider, ConfigT
-from .macros import expand_macros, load_defaults, merge_defaults
+from .macros import MacroResolutionError, expand_macros, load_defaults, merge_defaults
 
 
 class YamlConfigProvider(ConfigProvider[ConfigT]):
@@ -96,6 +96,8 @@ class YamlConfigProvider(ConfigProvider[ConfigT]):
         # Process config with defaults and macros
         try:
             processed_config = self._process_config(config_dict, defaults, path)
+        except MacroResolutionError:
+            raise
         except ValueError as e:
             # Re-raise with file context
             raise ValueError(f"Error processing '{path}': {e}") from e
@@ -128,6 +130,8 @@ class YamlConfigProvider(ConfigProvider[ConfigT]):
             defaults = self._load_defaults_for_config(None)  # Load from explicit path only
             try:
                 config_dict = self._process_config(config_dict, defaults, Path("."))
+            except MacroResolutionError:
+                raise
             except ValueError as e:
                 # Re-raise with context
                 context = f" in '{source_file}'" if source_file else ""
@@ -165,7 +169,7 @@ class YamlConfigProvider(ConfigProvider[ConfigT]):
                     self._defaults_cache[defaults_path] = load_defaults(defaults_path)
                 return self._defaults_cache[defaults_path]
 
-        return {}
+        return load_defaults()
 
     def _process_config(
         self, config_dict: dict[str, Any], defaults: dict[str, Any], config_path: Path
