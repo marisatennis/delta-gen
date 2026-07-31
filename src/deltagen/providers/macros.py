@@ -9,21 +9,52 @@ from typing import Any
 import yaml
 
 
+class MacroResolutionError(ValueError):
+    """A configuration macro cannot be resolved from the known vocabulary."""
+
+    def __init__(self, token: str, config_path: str, known_keys: list[str]):
+        self.token = token
+        self.config_path = config_path
+        self.known_keys = known_keys
+        location = f" at '{config_path}'" if config_path else ""
+        known = ", ".join(known_keys) if known_keys else "(none)"
+        super().__init__(
+            f"Could not resolve '{token}'{location}. Known keys: {known}"
+        )
+
+
+_ENGINE_DEFAULTS_PATH = Path(__file__).with_name("engine_defaults.yaml")
+
+
+def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]:
+    """Merge nested mappings, with consumer-provided values taking precedence."""
+    result = copy.deepcopy(base)
+    for key, value in overlay.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
+
+
 def load_defaults(defaults_path: str | Path | None = None) -> dict[str, Any]:
     """Load defaults from a YAML file.
 
     Args:
-        defaults_path: Path to defaults.yaml. If None, looks for defaults.yaml
-                      in the same directory as the config being loaded.
+        defaults_path: Optional consumer defaults file. Engine-owned column
+                      defaults are always loaded and consumer values override them.
 
     Returns:
-        Dictionary containing default values
+        Engine defaults merged with any consumer-provided default values
 
     Raises:
         FileNotFoundError: If defaults file doesn't exist
     """
+    with open(_ENGINE_DEFAULTS_PATH, "r") as f:
+        engine_defaults = yaml.safe_load(f) or {}
+
     if defaults_path is None:
-        return {}
+        return engine_defaults
 
     path = Path(defaults_path)
     if not path.exists():
@@ -32,7 +63,10 @@ def load_defaults(defaults_path: str | Path | None = None) -> dict[str, Any]:
     with open(path, "r") as f:
         data = yaml.safe_load(f)
 
-    return data if data is not None else {}
+    loaded = data if data is not None else {}
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Defaults file must contain a mapping: {path}")
+    return _deep_merge(engine_defaults, loaded)
 
 
 def expand_macros(config: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
@@ -98,10 +132,10 @@ def _expand_string_macros(value: str, context: dict[str, Any], path: str) -> Any
             # Convert to string for interpolation inside a larger string
             return str(resolved_value)
         except KeyError as e:
-            raise ValueError(
-                f"Macro expansion failed at '{path}': "
-                f"Could not resolve '${{{macro_path}}}'. "
-                f"Available paths: {_get_available_paths(context)}"
+            raise MacroResolutionError(
+                token=f"${{{macro_path}}}",
+                config_path=path,
+                known_keys=_get_known_keys(macro_path, context),
             ) from e
 
     # Check if entire value is a single macro (preserve type)
@@ -111,10 +145,10 @@ def _expand_string_macros(value: str, context: dict[str, Any], path: str) -> Any
         try:
             return _resolve_path(macro_path, context)
         except KeyError as e:
-            raise ValueError(
-                f"Macro expansion failed at '{path}': "
-                f"Could not resolve '${{{macro_path}}}'. "
-                f"Available paths: {_get_available_paths(context)}"
+            raise MacroResolutionError(
+                token=f"${{{macro_path}}}",
+                config_path=path,
+                known_keys=_get_known_keys(macro_path, context),
             ) from e
 
     # Otherwise, do string replacement
@@ -170,6 +204,22 @@ def _get_available_paths(context: dict[str, Any], prefix: str = "", max_depth: i
             paths.extend(_get_available_paths(value, current_path, max_depth - 1))
 
     return paths[:20]  # Limit for readability
+
+
+def _get_known_keys(path: str, context: dict[str, Any]) -> list[str]:
+    """List valid sibling keys for the unresolved macro's nearest namespace."""
+    parts = path.split(".")
+    current: Any = context
+    resolved: list[str] = []
+    for part in parts[:-1]:
+        if not isinstance(current, dict) or part not in current:
+            return sorted(_get_available_paths(context))
+        current = current[part]
+        resolved.append(part)
+    if not isinstance(current, dict):
+        return sorted(_get_available_paths(context))
+    prefix = ".".join(resolved)
+    return sorted(f"{prefix}.{key}" if prefix else str(key) for key in current)
 
 
 def merge_column_templates(config: dict[str, Any], defaults: dict[str, Any]) -> dict[str, Any]:
